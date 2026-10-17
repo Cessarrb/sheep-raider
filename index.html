@@ -3,68 +3,518 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#0e1116">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
 <title>Sheep Raider (PS1)</title>
 <style>
-  :root { color-scheme: dark; --bg:#0e1116; --fg:#e8eaed; --muted:#8b93a1; --accent:#e8a33d; }
-  * { box-sizing: border-box; }
-  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg);
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  body { display:flex; flex-direction:column; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
-  main { flex:1 1 auto; min-height:0; }
-  #game { width:100%; height:100%; }
-  #start { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px 16px; text-align:center; }
-  #start h1 { margin:0 0 4px; font-size:1.3rem; }
-  #start p { margin:0; color:var(--muted); font-size:.9rem; max-width:34ch; }
-  .btn { display:inline-block; min-width:240px; padding:14px 18px; border-radius:12px; border:0; font-size:1rem; font-weight:600; cursor:pointer; }
-  .primary { background:var(--accent); color:#1a1205; }
-  .secondary { background:#232934; color:var(--fg); }
-  #file { display:none; }
-  #status { color:var(--muted); font-size:.85rem; min-height:1.2em; }
+  :root {
+    color-scheme: dark;
+    --bg: #0e1116; --fg: #e8eaed; --muted: #8b93a1; --accent: #e8a33d;
+    --panel: #161b22; --line: #2a313c;
+    --ctl-opacity: .35; --ctl-scale: 1;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #000; color: var(--fg); overflow: hidden;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-user-select: none; user-select: none; overscroll-behavior: none; }
+
+  /* ---------- Pantalla de inicio ---------- */
+  #start { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; padding: 24px 16px; text-align: center; z-index: 30; }
+  #start h1 { margin: 0 0 4px; font-size: 1.3rem; }
+  #start p { margin: 0; color: var(--muted); font-size: .9rem; max-width: 36ch; }
+  .btn { display: inline-block; min-width: 240px; padding: 14px 18px; border-radius: 12px; border: 0;
+    font-size: 1rem; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .primary { background: var(--accent); color: #1a1205; }
+  .secondary { background: #232934; color: var(--fg); }
+  #file { display: none; }
+  #status { color: var(--muted); font-size: .85rem; min-height: 1.2em; }
+
+  /* ---------- Escenario del juego ---------- */
+  #stage { position: fixed; inset: 0; overflow: hidden; background: #000; }
+  /* El emulador siempre tiene tamaño 4:3 en layout (así no dibuja bordes negros adentro);
+     después se escala con transform para llenar la pantalla. */
+  #game { position: absolute; left: 50%; top: 50%; width: 960px; height: 720px;
+    transform-origin: 50% 50%; transform: translate(-50%, -50%); }
+  #game.smooth canvas { image-rendering: auto; }
+  #game.sharp canvas { image-rendering: pixelated; }
+  /* Ocultar el gamepad virtual propio de EmulatorJS: usamos el nuestro */
+  .ejs_virtualGamepad_parent { display: none !important; }
+
+  /* ---------- Capa de controles táctiles ---------- */
+  #touch { position: fixed; inset: 0; z-index: 10; touch-action: none; display: none; }
+  #touch.on { display: block; }
+  .stick-base, .stick-knob { position: absolute; border-radius: 50%; pointer-events: none;
+    transform: translate(-50%, -50%); display: none; }
+  .stick-base { width: calc(130px * var(--ctl-scale)); height: calc(130px * var(--ctl-scale));
+    border: 2px solid rgba(255,255,255,.35); background: rgba(255,255,255,.06); }
+  .stick-knob { width: calc(58px * var(--ctl-scale)); height: calc(58px * var(--ctl-scale));
+    background: rgba(255,255,255,.28); border: 2px solid rgba(255,255,255,.45); }
+  .cam-dot { position: absolute; width: 22px; height: 22px; border-radius: 50%; pointer-events: none;
+    transform: translate(-50%, -50%); border: 2px solid rgba(232,163,61,.6); display: none; }
+
+  .b { position: absolute; display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; color: #fff; font-weight: 700; opacity: var(--ctl-opacity);
+    background: rgba(20,24,30,.55); border: 2px solid rgba(255,255,255,.55);
+    width: calc(var(--s, 62px) * var(--ctl-scale)); height: calc(var(--s, 62px) * var(--ctl-scale));
+    font-size: calc(24px * var(--ctl-scale)); transform: translate(-50%, -50%); touch-action: none; }
+  .b.down { opacity: calc(var(--ctl-opacity) + .4); background: rgba(232,163,61,.45); }
+  .b.pill { border-radius: 999px; width: calc(var(--w, 64px) * var(--ctl-scale));
+    height: calc(32px * var(--ctl-scale)); font-size: calc(13px * var(--ctl-scale)); letter-spacing: .04em; }
+  .b.sys { --w: 72px; font-size: calc(11px * var(--ctl-scale)); }
+  .b.icon { --s: 40px; font-size: calc(18px * var(--ctl-scale)); opacity: max(var(--ctl-opacity), .45); }
+  .tri { color: #5fd4b0; } .cir { color: #ff6b6b; } .crs { color: #7aa7ff; } .sqr { color: #ef8fd0; }
+
+  #fps { position: fixed; left: 8px; bottom: 6px; z-index: 11; font: 600 12px/1 ui-monospace, monospace;
+    color: #9fe39f; background: rgba(0,0,0,.45); padding: 4px 6px; border-radius: 6px; display: none; pointer-events: none; }
+  #toast { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); z-index: 40;
+    background: rgba(22,27,34,.92); border: 1px solid var(--line); color: var(--fg); padding: 8px 14px;
+    border-radius: 10px; font-size: .85rem; display: none; max-width: 90vw; text-align: center; }
+
+  /* ---------- Panel de ajustes ---------- */
+  #menu { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.6); display: none;
+    align-items: center; justify-content: center; padding: 12px; }
+  #menu.open { display: flex; }
+  .sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; width: min(560px, 100%);
+    max-height: 100%; overflow-y: auto; padding: 14px 16px 16px; }
+  .sheet h2 { margin: 0 0 10px; font-size: 1rem; display: flex; justify-content: space-between; align-items: center; }
+  .sheet .close { background: none; border: 0; color: var(--muted); font-size: 1.4rem; cursor: pointer; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 8px 0;
+    border-top: 1px solid var(--line); font-size: .9rem; }
+  .row small { display: block; color: var(--muted); font-size: .75rem; margin-top: 2px; }
+  .row select, .row input[type=range] { background: #0e1116; color: var(--fg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 8px; font-size: .85rem; font-family: inherit; max-width: 52vw; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .actions button { flex: 1 1 auto; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: #232934; color: var(--fg); font-size: .85rem; font-family: inherit; cursor: pointer; }
+  .actions button.hl { background: var(--accent); color: #1a1205; border-color: transparent; font-weight: 600; }
+  #analogState { font-size: .75rem; color: var(--muted); margin-top: 8px; }
 </style>
 </head>
 <body>
+
 <section id="start">
   <h1>Looney Tunes: Sheep Raider</h1>
-  <p>PlayStation emulado en el navegador. Cargá tu copia del juego (.chd, .cue/.bin) desde el dispositivo; no se sube a ningún lado. En el celular, ponelo en horizontal.</p>
+  <p>PlayStation emulado en el navegador. Cargá tu copia del juego (.chd, .cue/.bin) desde el dispositivo; no se sube a ningún lado.</p>
   <label class="btn primary" for="file">Cargar juego desde este dispositivo</label>
   <input id="file" type="file" accept=".chd,.cue,.bin,.zip,.7z,.pbp,.iso,application/octet-stream">
   <button class="btn secondary" id="fromServer">Jugar desde la PC (servidor)</button>
   <div id="status"></div>
 </section>
-<main id="main" hidden><div id="game"></div></main>
+
+<div id="stage" hidden><div id="game"></div></div>
+
+<div id="touch">
+  <div class="stick-base" id="stickBase"></div>
+  <div class="stick-knob" id="stickKnob"></div>
+  <div class="cam-dot" id="camDot"></div>
+
+  <!-- gatillos -->
+  <div class="b pill" data-btn="12" style="left:calc(52px*var(--ctl-scale) + 10px); top:calc(22px*var(--ctl-scale) + 8px)">L2</div>
+  <div class="b pill" data-btn="10" style="left:calc(52px*var(--ctl-scale) + 10px); top:calc(62px*var(--ctl-scale) + 10px)">L1</div>
+  <div class="b pill" data-btn="13" style="right:calc(52px*var(--ctl-scale) + 10px); left:auto; top:calc(22px*var(--ctl-scale) + 8px); transform:translate(50%,-50%)">R2</div>
+  <div class="b pill" data-btn="11" style="right:calc(52px*var(--ctl-scale) + 10px); left:auto; top:calc(62px*var(--ctl-scale) + 10px); transform:translate(50%,-50%)">R1</div>
+
+  <!-- sistema -->
+  <div class="b pill sys" data-btn="2" style="left:calc(50% - 46px*var(--ctl-scale)); bottom:calc(14px*var(--ctl-scale)); top:auto; transform:translate(-50%,0)">SELECT</div>
+  <div class="b pill sys" data-btn="3" style="left:calc(50% + 46px*var(--ctl-scale)); bottom:calc(14px*var(--ctl-scale)); top:auto; transform:translate(-50%,0)">START</div>
+  <div class="b icon" id="btnMenu" style="left:calc(50% - 26px*var(--ctl-scale)); top:calc(26px*var(--ctl-scale) + 6px)" aria-label="Ajustes">⚙</div>
+  <div class="b icon" id="btnFull" style="left:calc(50% + 26px*var(--ctl-scale)); top:calc(26px*var(--ctl-scale) + 6px)" aria-label="Pantalla completa">⛶</div>
+
+  <!-- acciones (abajo a la derecha) -->
+  <div id="face">
+    <div class="b tri" data-btn="9">△</div>
+    <div class="b cir" data-btn="8">○</div>
+    <div class="b crs" data-btn="0">✕</div>
+    <div class="b sqr" data-btn="1">□</div>
+  </div>
+</div>
+
+<div id="fps"></div>
+<div id="toast"></div>
+
+<div id="menu">
+  <div class="sheet">
+    <h2>Ajustes <button class="close" id="menuClose" aria-label="Cerrar">×</button></h2>
+
+    <div class="row"><div>Calidad gráfica<small>Rendimiento = más fluido en celulares lentos</small></div>
+      <select data-set="quality">
+        <option value="rendimiento">Rendimiento</option>
+        <option value="equilibrado">Equilibrado</option>
+        <option value="calidad">Calidad</option>
+      </select></div>
+
+    <div class="row"><div>Imagen en pantalla<small>Estirar = sin bordes negros</small></div>
+      <select data-set="scale">
+        <option value="pantalla">Estirar a pantalla completa</option>
+        <option value="zoom">Zoom (recorta arriba/abajo)</option>
+        <option value="ajustar">Original 4:3 (con bordes)</option>
+      </select></div>
+
+    <div class="row"><div>Cámara (dedo derecho)<small>Si no gira, probá otra opción</small></div>
+      <select data-set="camera">
+        <option value="stick">Stick derecho</option>
+        <option value="l1r1">Botones L1 / R1</option>
+        <option value="l2r2">Botones L2 / R2</option>
+        <option value="off">Desactivada</option>
+      </select></div>
+
+    <div class="row"><div>Invertir cámara</div>
+      <select data-set="camInvert">
+        <option value="none">No</option>
+        <option value="x">Horizontal</option>
+        <option value="y">Vertical</option>
+        <option value="xy">Ambos</option>
+      </select></div>
+
+    <div class="row"><div>Sensibilidad de cámara</div>
+      <input type="range" min="0.5" max="2.5" step="0.1" data-set="camSens"></div>
+
+    <div class="row"><div>Movimiento (dedo izquierdo)<small>Auto usa analógico si está disponible</small></div>
+      <select data-set="move">
+        <option value="auto">Auto</option>
+        <option value="analogico">Stick analógico</option>
+        <option value="cruceta">Cruceta (digital)</option>
+      </select></div>
+
+    <div class="row"><div>Transparencia de botones</div>
+      <input type="range" min="0.1" max="0.8" step="0.05" data-set="opacity"></div>
+
+    <div class="row"><div>Tamaño de botones</div>
+      <input type="range" min="0.7" max="1.4" step="0.05" data-set="btnSize"></div>
+
+    <div class="row"><div>Mostrar FPS</div>
+      <select data-set="showFps"><option value="0">No</option><option value="1">Sí</option></select></div>
+
+    <div class="row"><div>Versión del emulador<small>“Nueva” habilita el stick analógico; se aplica al recargar</small></div>
+      <select data-set="ejsVersion">
+        <option value="stable">Estable</option>
+        <option value="latest">Nueva (experimental)</option>
+      </select></div>
+
+    <div id="analogState"></div>
+
+    <div class="actions">
+      <button id="saveState">Guardar partida rápida</button>
+      <button id="loadState">Cargar partida rápida</button>
+      <button id="reload">Recargar</button>
+      <button class="hl" id="menuOk">Listo</button>
+    </div>
+  </div>
+</div>
 
 <script>
-  function startEmulator(gameUrl, gameName) {
-    document.getElementById('start').remove();
-    document.getElementById('main').hidden = false;
+(() => {
+  'use strict';
+
+  // ---------------- Ajustes persistentes ----------------
+  const DEFAULTS = {
+    quality: 'equilibrado', scale: 'pantalla', camera: 'stick', camInvert: 'none', camSens: 1.2,
+    move: 'auto', opacity: 0.35, btnSize: 1, showFps: '0', ejsVersion: 'stable'
+  };
+  const KEY = 'sheepraider.settings.v1';
+  let S = { ...DEFAULTS };
+  try { S = { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch (e) {}
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+
+  // Presets de calidad: tamaño interno del canvas (múltiplos de 240 = escalado limpio)
+  // y opciones del core PCSX-ReARMed / EmulatorJS.
+  const PRESETS = {
+    rendimiento: { w: 640,  h: 480, smooth: true,  opts: { pcsx_rearmed_frameskip_type: 'auto',     pcsx_rearmed_dithering: 'disabled', shader: 'disabled' } },
+    equilibrado: { w: 960,  h: 720, smooth: true,  opts: { pcsx_rearmed_frameskip_type: 'auto',     pcsx_rearmed_dithering: 'disabled', shader: 'disabled' } },
+    calidad:     { w: 1280, h: 960, smooth: false, opts: { pcsx_rearmed_frameskip_type: 'disabled', pcsx_rearmed_dithering: 'disabled', shader: '2xScaleHQ.glslp' } }
+  };
+
+  const $ = (s) => document.querySelector(s);
+  const stage = $('#stage'), game = $('#game'), touch = $('#touch');
+  const TEST = new URLSearchParams(location.search).has('test');
+
+  // ---------------- Toast ----------------
+  let toastT;
+  function toast(msg, ms = 2200) {
+    const t = $('#toast'); t.textContent = msg; t.style.display = 'block';
+    clearTimeout(toastT); toastT = setTimeout(() => { t.style.display = 'none'; }, ms);
+  }
+
+  // ---------------- Escalado sin bordes ----------------
+  function layout() {
+    const p = PRESETS[S.quality] || PRESETS.equilibrado;
+    game.style.width = p.w + 'px'; game.style.height = p.h + 'px';
+    game.classList.toggle('smooth', p.smooth); game.classList.toggle('sharp', !p.smooth);
+    const vw = window.innerWidth, vh = window.innerHeight;
+    let sx = vw / p.w, sy = vh / p.h;
+    if (S.scale === 'ajustar') { sx = sy = Math.min(sx, sy); }
+    else if (S.scale === 'zoom') { sx = sy = Math.max(sx, sy); }
+    game.style.transform = `translate(-50%, -50%) scale(${sx}, ${sy})`;
+  }
+  window.addEventListener('resize', layout);
+  window.addEventListener('orientationchange', () => setTimeout(layout, 300));
+
+  // ---------------- Controles: apariencia ----------------
+  function applyLook() {
+    document.documentElement.style.setProperty('--ctl-opacity', S.opacity);
+    document.documentElement.style.setProperty('--ctl-scale', S.btnSize);
+    placeFace();
+    $('#fps').style.display = S.showFps === '1' ? 'block' : 'none';
+  }
+  function placeFace() {
+    const k = +S.btnSize, gap = 58 * k;
+    const cx = window.innerWidth - (100 * k + 16), cy = window.innerHeight - (100 * k + 20);
+    const pos = { 9: [0, -gap], 8: [gap, 0], 0: [0, gap], 1: [-gap, 0] };
+    document.querySelectorAll('#face .b').forEach(el => {
+      const [dx, dy] = pos[el.dataset.btn];
+      el.style.left = (cx + dx) + 'px'; el.style.top = (cy + dy) + 'px';
+    });
+  }
+  window.addEventListener('resize', placeFace);
+
+  // ---------------- Envío de entradas al emulador ----------------
+  // Índices RetroPad de EmulatorJS: 0 ✕(B) 1 □(Y) 2 Select 3 Start 4↑ 5↓ 6← 7→ 8 ○(A) 9 △(X)
+  // 10 L1 11 R1 12 L2 13 R2 | analógicos: 16/17 izq X+/-, 18/19 izq Y+/-, 20/21 der X+/-, 22/23 der Y+/-
+  const last = new Map();
+  function send(idx, val) {
+    val = Math.round(val);
+    if (last.get(idx) === val) return;
+    last.set(idx, val);
+    try { window.EJS_emulator && EJS_emulator.gameManager && EJS_emulator.gameManager.simulateInput(0, idx, val); } catch (e) {}
+  }
+  const AMAX = 0x7fff;
+  function sendAxis(posIdx, negIdx, v) {   // v en -1..1
+    send(posIdx, v > 0 ? v * AMAX : 0);
+    send(negIdx, v < 0 ? -v * AMAX : 0);
+  }
+
+  let analogOK = false;
+  function useAnalogMove() { return S.move === 'analogico' || (S.move === 'auto' && analogOK); }
+
+  // ---------------- Gestión de dedos ----------------
+  const ptrs = new Map(); // pointerId -> {role, x0, y0, btn}
+  const base = $('#stickBase'), knob = $('#stickKnob'), camDot = $('#camDot');
+
+  function isButton(el) { return el && el.closest && el.closest('.b'); }
+
+  touch.addEventListener('pointerdown', (e) => {
+    const b = isButton(e.target);
+    if (b) return; // los botones tienen su propio manejo
+    e.preventDefault();
+    const leftSide = e.clientX < window.innerWidth * 0.5;
+    if (leftSide && ![...ptrs.values()].some(p => p.role === 'move')) {
+      ptrs.set(e.pointerId, { role: 'move', x0: e.clientX, y0: e.clientY });
+      base.style.left = knob.style.left = e.clientX + 'px';
+      base.style.top = knob.style.top = e.clientY + 'px';
+      base.style.display = knob.style.display = 'block';
+    } else if (!leftSide && S.camera !== 'off' && ![...ptrs.values()].some(p => p.role === 'cam')) {
+      ptrs.set(e.pointerId, { role: 'cam', x0: e.clientX, y0: e.clientY });
+      camDot.style.left = e.clientX + 'px'; camDot.style.top = e.clientY + 'px'; camDot.style.display = 'block';
+    }
+    try { touch.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+
+  touch.addEventListener('pointermove', (e) => {
+    const p = ptrs.get(e.pointerId); if (!p) return;
+    e.preventDefault();
+    const dx = e.clientX - p.x0, dy = e.clientY - p.y0;
+    if (p.role === 'move') {
+      const R = 60 * S.btnSize;
+      const d = Math.hypot(dx, dy), k = d > R ? R / d : 1;
+      knob.style.left = (p.x0 + dx * k) + 'px'; knob.style.top = (p.y0 + dy * k) + 'px';
+      let nx = (dx * k) / R, ny = (dy * k) / R;
+      if (Math.hypot(nx, ny) < 0.15) nx = ny = 0;
+      if (useAnalogMove()) {
+        sendAxis(16, 17, nx); sendAxis(18, 19, ny);
+      } else {
+        send(4, ny < -0.4 ? 1 : 0); send(5, ny > 0.4 ? 1 : 0);
+        send(6, nx < -0.4 ? 1 : 0); send(7, nx > 0.4 ? 1 : 0);
+      }
+    } else if (p.role === 'cam') {
+      const invX = S.camInvert.includes('x') ? -1 : 1, invY = S.camInvert.includes('y') ? -1 : 1;
+      const R = 70 / S.camSens;
+      let nx = Math.max(-1, Math.min(1, dx / R)) * invX, ny = Math.max(-1, Math.min(1, dy / R)) * invY;
+      if (Math.abs(nx) < 0.12) nx = 0; if (Math.abs(ny) < 0.12) ny = 0;
+      camDot.style.left = e.clientX + 'px'; camDot.style.top = e.clientY + 'px';
+      if (S.camera === 'stick') { sendAxis(20, 21, nx); sendAxis(22, 23, ny); }
+      else {
+        const [L, Rb] = S.camera === 'l1r1' ? [10, 11] : [12, 13];
+        send(L, nx < -0.35 ? 1 : 0); send(Rb, nx > 0.35 ? 1 : 0);
+      }
+    }
+  });
+
+  function endPtr(e) {
+    const p = ptrs.get(e.pointerId); if (!p) return;
+    ptrs.delete(e.pointerId);
+    if (p.role === 'move') {
+      base.style.display = knob.style.display = 'none';
+      sendAxis(16, 17, 0); sendAxis(18, 19, 0);
+      [4, 5, 6, 7].forEach(i => send(i, 0));
+    } else if (p.role === 'cam') {
+      camDot.style.display = 'none';
+      sendAxis(20, 21, 0); sendAxis(22, 23, 0);
+      [10, 11, 12, 13].forEach(i => { if (!pressedBtns.has(i)) send(i, 0); });
+    }
+  }
+  touch.addEventListener('pointerup', endPtr);
+  touch.addEventListener('pointercancel', endPtr);
+
+  // Botones (multitáctil: cada dedo su botón)
+  const pressedBtns = new Set();
+  document.querySelectorAll('#touch .b[data-btn]').forEach(el => {
+    const idx = +el.dataset.btn;
+    const down = (e) => { e.preventDefault(); e.stopPropagation(); el.classList.add('down'); pressedBtns.add(idx); send(idx, 1);
+      try { el.setPointerCapture(e.pointerId); } catch (err) {} if (navigator.vibrate) navigator.vibrate(8); };
+    const up = (e) => { e.preventDefault(); el.classList.remove('down'); pressedBtns.delete(idx); send(idx, 0); };
+    el.addEventListener('pointerdown', down);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+  });
+
+  // ---------------- Pantalla completa ----------------
+  async function goFullscreen() {
+    try {
+      if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+      if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape').catch(() => {});
+    } catch (e) {}
+    setTimeout(layout, 250);
+  }
+  function toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else goFullscreen();
+  }
+  $('#btnFull').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); toggleFullscreen(); });
+  document.addEventListener('fullscreenchange', () => setTimeout(layout, 200));
+
+  // Mantener la pantalla encendida
+  let wakeLock = null;
+  async function keepAwake() { try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {} }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && wakeLock) keepAwake(); });
+
+  // ---------------- Menú de ajustes ----------------
+  const menu = $('#menu');
+  function openMenu() {
+    menu.querySelectorAll('[data-set]').forEach(el => { el.value = S[el.dataset.set]; });
+    $('#analogState').textContent = analogOK
+      ? 'Mando analógico activo ✓ (stick izquierdo y derecho).'
+      : 'Mando analógico no disponible en esta versión: la cámara por stick puede no funcionar. Probá “L1 / R1” o la versión “Nueva”.';
+    menu.classList.add('open');
+  }
+  function closeMenu() { menu.classList.remove('open'); }
+  $('#btnMenu').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); openMenu(); });
+  $('#menuClose').addEventListener('click', closeMenu);
+  $('#menuOk').addEventListener('click', closeMenu);
+  menu.addEventListener('click', (e) => { if (e.target === menu) closeMenu(); });
+
+  menu.querySelectorAll('[data-set]').forEach(el => {
+    el.addEventListener('input', () => {
+      const k = el.dataset.set, before = S[k];
+      S[k] = (el.type === 'range') ? parseFloat(el.value) : el.value;
+      save();
+      if (k === 'quality') { layout(); applyCoreOptions(); }
+      if (k === 'scale') layout();
+      if (k === 'opacity' || k === 'btnSize' || k === 'showFps') applyLook();
+      if (k === 'move' || k === 'camera') { if (S[k] !== 'cruceta' && S[k] !== 'off') tryAnalog(); }
+      if (k === 'ejsVersion' && before !== S[k]) toast('Se aplica al tocar “Recargar”.');
+    });
+  });
+  $('#saveState').addEventListener('click', () => { send(24, 1); setTimeout(() => send(24, 0), 100); toast('Partida guardada'); });
+  $('#loadState').addEventListener('click', () => { send(25, 1); setTimeout(() => send(25, 0), 100); toast('Partida cargada'); });
+  $('#reload').addEventListener('click', () => location.reload());
+
+  // ---------------- Emulador ----------------
+  function applyCoreOptions() {
+    const opts = PRESETS[S.quality].opts;
+    const emu = window.EJS_emulator;
+    if (!emu || typeof emu.changeSettingOption !== 'function') return;
+    for (const [k, v] of Object.entries(opts)) { try { emu.changeSettingOption(k, v); } catch (e) {} }
+  }
+
+  function tryAnalog() {
+    if (analogOK) return true;
+    const emu = window.EJS_emulator; if (!emu) return false;
+    const DEV_ANALOG = 261; // RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 0) en PCSX-ReARMed
+    try {
+      const gm = emu.gameManager;
+      if (gm && typeof gm.setControllerPortDevice === 'function') { gm.setControllerPortDevice(0, DEV_ANALOG); analogOK = true; }
+      else if (emu.Module && typeof emu.Module._ejs_set_controller_port_device === 'function') {
+        emu.Module._ejs_set_controller_port_device(0, DEV_ANALOG); analogOK = true;
+      }
+    } catch (e) { analogOK = false; }
+    return analogOK;
+  }
+
+  // Contador de FPS
+  let fpsLast = null, fpsTime = 0;
+  setInterval(() => {
+    if (S.showFps !== '1') return;
+    try {
+      const n = EJS_emulator.gameManager.getFrameNum(), t = performance.now();
+      if (fpsLast !== null) $('#fps').textContent = Math.round((n - fpsLast) * 1000 / (t - fpsTime)) + ' FPS';
+      fpsLast = n; fpsTime = t;
+    } catch (e) {}
+  }, 1000);
+
+  function onGameStarted() {
+    touch.classList.add('on');
+    applyCoreOptions();
+    if (S.move !== 'cruceta' || S.camera === 'stick') tryAnalog();
+    keepAwake();
+    toast(analogOK ? 'Listo. Dedo izq: mover · Dedo der: cámara' : 'Listo. Dedo izq: mover · ⚙ para ajustes');
+  }
+
+  function startEmulator(gameUrl) {
+    $('#start').remove();
+    stage.hidden = false;
+    applyLook(); layout();
+    goFullscreen();
+    if (TEST) { return startTestMode(); }
+    const path = S.ejsVersion === 'latest' ? 'https://cdn.emulatorjs.org/latest/data/' : 'https://cdn.emulatorjs.org/stable/data/';
     window.EJS_player = '#game';
     window.EJS_core = 'psx';
     window.EJS_gameName = 'Sheep Raider';
     window.EJS_gameUrl = gameUrl;
-    window.EJS_pathtodata = 'https://cdn.emulatorjs.org/stable/data/';
+    window.EJS_pathtodata = path;
     window.EJS_color = '#e8a33d';
     window.EJS_threads = false;
     window.EJS_startOnLoaded = true;
+    window.EJS_defaultOptions = { 'virtual-gamepad': 'disabled', ...PRESETS[S.quality].opts };
+    window.EJS_onGameStart = onGameStarted;
     const s = document.createElement('script');
-    s.src = 'https://cdn.emulatorjs.org/stable/data/loader.js';
+    s.src = path + 'loader.js';
+    s.onerror = () => toast('No se pudo cargar el emulador. ¿Hay internet?', 5000);
     document.body.appendChild(s);
   }
-  document.getElementById('file').addEventListener('change', e => {
+
+  // Modo prueba (?test): dibuja una imagen 4:3 falsa y registra las entradas, sin emulador
+  function startTestMode() {
+    const c = document.createElement('canvas'); c.width = 320; c.height = 240;
+    c.style.width = '100%'; c.style.height = '100%'; c.style.display = 'block';
+    const g = c.getContext('2d');
+    const grd = g.createLinearGradient(0, 0, 320, 240); grd.addColorStop(0, '#2b6'); grd.addColorStop(1, '#236');
+    g.fillStyle = grd; g.fillRect(0, 0, 320, 240);
+    g.strokeStyle = '#fff'; g.lineWidth = 4; g.strokeRect(2, 2, 316, 236);
+    g.fillStyle = '#fff'; g.font = '20px sans-serif'; g.fillText('4:3 de prueba', 92, 125);
+    game.appendChild(c);
+    window.__inputs = [];
+    window.EJS_emulator = { gameManager: { simulateInput: (p, i, v) => window.__inputs.push([i, v]), getFrameNum: () => Math.floor(performance.now() / 16.7) } };
+    onGameStarted();
+  }
+
+  document.getElementById('file').addEventListener('change', (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
-    document.getElementById('status').textContent = 'Cargando ' + f.name + '…';
-    startEmulator(f, f.name);
+    $('#status').textContent = 'Cargando ' + f.name + '…';
+    startEmulator(f);
   });
   const isLocal = /^(localhost|127\.0\.0\.1|192\.168\.|10\.|172\.)/.test(location.hostname);
-  if (!isLocal) document.getElementById('fromServer').hidden = true;
-  document.getElementById('fromServer').addEventListener('click', () => {
-    if (location.protocol === 'file:') {
-      document.getElementById('status').textContent = 'Para esta opción abrí la página con iniciar.bat.';
-      return;
-    }
-    startEmulator('game/sheep-raider.chd', 'sheep-raider.chd');
+  if (!isLocal && !TEST) $('#fromServer').hidden = true;
+  $('#fromServer').addEventListener('click', () => {
+    if (location.protocol === 'file:') { $('#status').textContent = 'Para esta opción abrí la página con iniciar.bat.'; return; }
+    startEmulator(TEST ? null : 'game/sheep-raider.chd');
   });
+})();
 </script>
 </body>
 </html>
